@@ -502,10 +502,10 @@ const ICONS = {
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-function exportToCSV(headers, rows, filename = "export.csv") {
+function exportToCSV(headers, rows, filename = "export.csv", labels = {}) {
   const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const csvContent = [
-    headers.map(escape).join(","),
+    headers.map(h => escape(labels[h] ?? h)).join(","),
     ...rows.map(r => headers.map(h => escape(r[h])).join(",")),
   ].join("\n");
   const blob = new Blob([csvContent], { type: "text/csv" });
@@ -516,8 +516,8 @@ function exportToCSV(headers, rows, filename = "export.csv") {
 }
 
 const PAGE_SIZES  = [25, 50, 100, 250];
-const SERVER_EXTS = ["xlsx", "xls"];
-const CLIENT_EXTS = ["csv", "tsv"];
+const SERVER_EXTS = [];  // server upload disabled: xlsx/xls now parse in browser (no network)
+const CLIENT_EXTS = ["xlsx", "xls", "csv", "tsv"];
 
 function getExt(filename) { return filename.split(".").pop().toLowerCase(); }
 
@@ -624,6 +624,61 @@ async function serverSheet({ file, sheet, pg = 1, ps = 50, q = "", sk = null, sd
   return res.json();
 }
 
+// ─── Smart sheet cleaner (auto header detection) ───────────────────────────────
+// Skips title / company / report-info rows, finds the real header row, trims
+// text, drops empty rows/columns and fixes blank / duplicate column names.
+function smartSheetRows(ws) {
+  const plain = () => XLSX.utils.sheet_to_json(ws, { defval: "" });
+  try {
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: true, blankrows: false });
+    if (!aoa.length) return plain();
+    const isEmpty = v => v === "" || v === null || v === undefined || (typeof v === "string" && v.trim() === "");
+    const filled  = row => row.reduce((n, v) => n + (isEmpty(v) ? 0 : 1), 0);
+
+    // 1) header candidates: ≥2 cells, all text, unique, followed by data rows
+    const cands = [];
+    for (let i = 0; i < Math.min(aoa.length, 30); i++) {
+      const cells = aoa[i].filter(v => !isEmpty(v));
+      if (cells.length < 2 || cells.some(v => typeof v !== "string")) continue;
+      if (new Set(cells.map(v => v.trim().toLowerCase())).size !== cells.length) continue;
+      const next = aoa.slice(i + 1, i + 6);
+      if (next.length === 0) continue;
+      const ok = next.filter(r => filled(r) >= Math.ceil(cells.length * 0.5)).length;
+      if (ok < Math.ceil(next.length / 2)) continue;
+      cands.push({ i, w: cells.length });
+    }
+    if (!cands.length) return plain();
+    const maxW = Math.max(...cands.map(c => c.w));
+    const hi   = cands.find(c => c.w >= maxW * 0.8).i;
+
+    // 2) columns = header cells + any headless column that holds data
+    const hdrRow   = aoa[hi];
+    const dataRows = aoa.slice(hi + 1).filter(r => filled(r) > 0);
+    if (!dataRows.length) return plain();
+    const width = Math.max(hdrRow.length, ...dataRows.map(r => r.length));
+    const colName = n => { let s = "", x = n; do { s = String.fromCharCode(65 + (x % 26)) + s; x = Math.floor(x / 26) - 1; } while (x >= 0); return s; };
+    const clean = v => (typeof v === "string" ? v.replace(/\s+/g, " ").trim() : v);
+    const cols = [], seen = {};
+    for (let c = 0; c < width; c++) {
+      let name = isEmpty(hdrRow[c]) ? "" : String(clean(hdrRow[c]));
+      const hasData = dataRows.some(r => !isEmpty(r[c]));
+      if (!name && !hasData) continue;
+      if (!name) name = "Column " + colName(c);
+      if (seen[name]) { seen[name] += 1; name = `${name}_${seen[name]}`; } else seen[name] = 1;
+      cols.push({ c, name });
+    }
+
+    // 3) build row objects
+    return dataRows.map(r => {
+      const o = {};
+      cols.forEach(({ c, name }) => { o[name] = isEmpty(r[c]) ? "" : clean(r[c]); });
+      return o;
+    });
+  } catch (e) {
+    return plain();
+  }
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function ExcelImporter() {
 
@@ -660,6 +715,9 @@ export default function ExcelImporter() {
 
   // ── Processing message ──
   const [processingMsg, setProcessingMsg] = useState("");
+
+  // ── Renamed column headings (display + export only; internal keys unchanged) ──
+  const [colLabels, setColLabels] = useState({}); // { [sheet]: { [origCol]: newLabel } }
 
   // ── SERVER mode state ──
   const [currentFile, setCurrentFile] = useState(null);
@@ -734,7 +792,7 @@ export default function ExcelImporter() {
           const wb   = XLSX.read(data, { type: "array", cellDates: true });
           const parsed = {};
           wb.SheetNames.forEach(name => {
-            parsed[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: "" });
+            parsed[name] = smartSheetRows(wb.Sheets[name]);
           });
           resolve({ wb, parsed, sheetNames: wb.SheetNames });
         } catch (err) { reject(err); }
@@ -762,6 +820,7 @@ export default function ExcelImporter() {
     setDateColumns([]); setActiveDateCol(""); setDateFilterMode("");
     setDateExact(""); setDateFrom(""); setDateTo(""); setDateFilterOpen(false);
     setZeroNullStats({}); setExcludeZeroCols([]); setZeroFilterOpen(false);
+    setColLabels({});
 
     try {
       if (SERVER_EXTS.includes(ext)) {
@@ -914,7 +973,7 @@ export default function ExcelImporter() {
     setDateColumns([]); setActiveDateCol(""); setDateFilterMode("");
     setDateExact(""); setDateFrom(""); setDateTo(""); setDateFilterOpen(false);
     setZeroNullStats({}); setExcludeZeroCols([]); setZeroFilterOpen(false);
-    setCalcCols([]); setCalcRows([]);
+    setCalcCols([]); setCalcRows([]); setColLabels({});
     if (fileRef.current) fileRef.current.value = "";
   };
 
@@ -1187,7 +1246,7 @@ export default function ExcelImporter() {
 
               {/* CENTER: Action buttons */}
               <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch", flexShrink: 0, width: 130 }}>
-                <button className="btn btn-ghost" onClick={() => exportToCSV(visibleCols, displayRows, `export_${activeSheet}.csv`)}>
+                <button className="btn btn-ghost" onClick={() => exportToCSV(visibleCols, displayRows, `export_${activeSheet}.csv`, colLabels[activeSheet] || {})}>
                   <Icon d={ICONS.download} size={14} /> Export CSV
                 </button>
                 <button className="btn btn-danger" onClick={resetAll}>
@@ -1300,6 +1359,8 @@ export default function ExcelImporter() {
               hasZeroFilter={hasZeroFilter}
               excludeZeroCols={excludeZeroCols}
               formatDateDisplay={formatDateDisplay}
+              colLabels={colLabels[activeSheet] || {}}
+              onRenameCol={(col, label) => setColLabels(p => ({ ...p, [activeSheet]: { ...(p[activeSheet] || {}), [col]: label } }))}
               {...sharedProps}
             />
 

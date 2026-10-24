@@ -26,10 +26,24 @@ const ExcelDataTable = ({
   COLORS,
   Icon,
   ICONS,
+  colLabels = {},
+  onRenameCol,
 }) => {
   const scrollRef   = useRef(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewHeight, setViewHeight] = useState(540);
+
+  // Rename column heading (display + export only)
+  const [editingCol, setEditingCol] = useState(null);
+  const [draft, setDraft] = useState("");
+  const startEdit = (col) => { setEditingCol(col); setDraft(colLabels[col] ?? col); };
+  const commitEdit = () => {
+    if (editingCol !== null && onRenameCol) {
+      const v = draft.trim();
+      onRenameCol(editingCol, v === "" || v === editingCol ? undefined : v);
+    }
+    setEditingCol(null);
+  };
 
   // Separate calc rows (always rendered at bottom)
   const calcRows  = displayRows.filter(r => r.__isCalcRow === true);
@@ -150,11 +164,36 @@ const ExcelDataTable = ({
                 {visibleCols.map(col => (
                   <th key={col}
                     className={dateColumns.includes(col) ? "date-col" : ""}
-                    onClick={() => handleSort(col)}>
-                    {dateColumns.includes(col) ? "📅 " : ""}{col}
-                    <span className={`sort-icon ${sortKey === col ? "active" : ""}`}>
-                      {sortKey === col ? (sortDir === "asc" ? " ↑" : " ↓") : " ↕"}
-                    </span>
+                    onClick={() => { if (editingCol !== col) handleSort(col); }}>
+                    {editingCol === col ? (
+                      <input
+                        autoFocus
+                        value={draft}
+                        onChange={e => setDraft(e.target.value)}
+                        onClick={e => e.stopPropagation()}
+                        onBlur={commitEdit}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") commitEdit();
+                          if (e.key === "Escape") setEditingCol(null);
+                        }}
+                        style={{ width: "100%", minWidth: 90, padding: "2px 6px", fontSize: 12, borderRadius: 4,
+                                 border: `1px solid ${COLORS.accent}`, background: COLORS.surface, color: COLORS.text, outline: "none" }}
+                      />
+                    ) : (
+                      <>
+                        {dateColumns.includes(col) ? "📅 " : ""}{colLabels[col] ?? col}
+                        <span className={`sort-icon ${sortKey === col ? "active" : ""}`}>
+                          {sortKey === col ? (sortDir === "asc" ? " ↑" : " ↓") : " ↕"}
+                        </span>
+                        {onRenameCol && (
+                          <span
+                            title="Rename heading"
+                            onClick={e => { e.stopPropagation(); startEdit(col); }}
+                            style={{ marginLeft: 6, cursor: "pointer", opacity: 0.55, fontSize: 11 }}
+                          >✎</span>
+                        )}
+                      </>
+                    )}
                   </th>
                 ))}
               </tr>

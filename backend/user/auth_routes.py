@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 from fastapi import APIRouter, HTTPException, Depends, Form, UploadFile, File
 from PIL import Image
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -15,6 +16,18 @@ from user import user_biometric_models as bio_models
 from user.auth_middleware import TokenManager  # Import token manager
 
 router = APIRouter()
+
+
+def safe_print(*args, **kwargs):
+    """print() that never crashes (Windows cp1252 consoles can't print emoji)."""
+    try:
+        print(*args, **kwargs)
+    except Exception:
+        try:
+            text = " ".join(str(a) for a in args)
+            print(text.encode("ascii", "replace").decode("ascii"))
+        except Exception:
+            pass
 
 # ==================== UTILITY FUNCTIONS ====================
 
@@ -51,7 +64,7 @@ def extract_face_features(image_data: bytes) -> str:
         feature_vector = np.array(regions).flatten()
         return ','.join([f"{x:.2f}" for x in feature_vector])
     except Exception as e:
-        print(f"Feature extraction error: {e}")
+        safe_print(f"Feature extraction error: {e}")
         raise
 
 def calculate_face_similarity(features1: str, features2: str) -> int:
@@ -66,7 +79,7 @@ def calculate_face_similarity(features1: str, features2: str) -> int:
 
         return int(similarity)
     except Exception as e:
-        print(f"Similarity calculation error: {e}")
+        safe_print(f"Similarity calculation error: {e}")
         return 0
 
 # ==================== LOGIN ENDPOINTS ====================
@@ -78,7 +91,7 @@ async def check_login_options(
 ):
     """Check available login methods for user"""
     user = db.query(user_models.User).filter(
-        user_models.User.email == email.lower().strip()
+        func.lower(user_models.User.email) == email.lower().strip()
     ).first()
 
     if not user:
@@ -104,11 +117,23 @@ async def login_with_password(
     db: Session = Depends(get_db)
 ):
     """Login with password - Returns access token"""
+    try:
+        return _password_login(user_id, password, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Login error: {type(e).__name__}: {e}")
+
+
+def _password_login(user_id: str, password: str, db: Session):
     user_id_lower = user_id.lower().strip()
 
     user = db.query(user_models.User).filter(
-        (user_models.User.email == user_id_lower) |
-        (user_models.User.user_id == user_id_lower)
+        (func.lower(user_models.User.email) == user_id_lower) |
+        (func.lower(user_models.User.user_id) == user_id_lower)
     ).first()
 
     if not user:
@@ -118,13 +143,13 @@ async def login_with_password(
         raise HTTPException(status_code=403, detail="Account is disabled")
 
     hashed_input = hash_password(password)
-    if hashed_input != user.password:
+    if hashed_input != str(user.password or "").strip().lower():
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # Create token using TokenManager
     access_token = TokenManager.create_token(user.id)  # type: ignore[arg-type]
 
-    print(f"✅ Password login successful for user {user.id}")
+    safe_print(f"✅ Password login successful for user {user.id}")
 
     return {
         "success": True,
@@ -145,7 +170,7 @@ async def login_with_fingerprint(
     db: Session = Depends(get_db)
 ):
     """Login with fingerprint - Returns access token"""
-    print(f"🔍 Fingerprint login attempt for: {email}")
+    safe_print(f"🔍 Fingerprint login attempt for: {email}")
 
     user = db.query(user_models.User).filter(
         user_models.User.email == email.lower().strip()
@@ -221,7 +246,7 @@ async def login_with_fingerprint(
         # Create token
         access_token = TokenManager.create_token(user.id)  # type: ignore[arg-type]
 
-        print(f"✅ Fingerprint login successful for user {user.id}")
+        safe_print(f"✅ Fingerprint login successful for user {user.id}")
 
         return {
             "success": True,
@@ -271,7 +296,7 @@ async def login_with_face_live(
     db: Session = Depends(get_db)
 ):
     """Login with live face capture - Returns access token"""
-    print(f"🔍 Face login attempt for: {email}")
+    safe_print(f"🔍 Face login attempt for: {email}")
 
     user = db.query(user_models.User).filter(
         user_models.User.email == email.lower().strip()
@@ -344,7 +369,7 @@ async def login_with_face_live(
         # Create token
         access_token = TokenManager.create_token(user.id)  # type: ignore[arg-type]
 
-        print(f"✅ Face login successful for user {user.id}")
+        safe_print(f"✅ Face login successful for user {user.id}")
 
         return {
             "success": True,

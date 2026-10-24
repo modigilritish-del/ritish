@@ -3,6 +3,39 @@ import { Search, Plus, Edit2, Trash2, Key, Users, Building, Factory, UserCheck, 
 
 const API_BASE = 'http://localhost:8000/api';
 
+// 🔑 Normalize register / reset-password response so email, user id and password always show
+const normalizeCredentials = (data, fallbackUser = null) => {
+  const raw = data || {};
+  const src = { ...raw, ...(raw.user || {}), ...(raw.credentials || {}), ...(raw.data || {}) };
+  let password =
+    src.auto_generated_password ?? src.generated_password ?? src.new_password ??
+    src.temp_password ?? src.temporary_password ?? src.password ?? src.plain_password;
+  if (!password) {
+    const key = Object.keys(src).find(
+      k => /pass/i.test(k) && !/hash/i.test(k) && typeof src[k] === 'string' && src[k]
+    );
+    if (key) password = src[key];
+  }
+  return {
+    ...src,
+    full_name: src.full_name || fallbackUser?.full_name,
+    email: src.email || fallbackUser?.email,
+    user_login_id: src.user_login_id || src.user_id || src.email || fallbackUser?.user_id || fallbackUser?.email,
+    auto_generated_password: password || ''
+  };
+};
+
+// 👑 Master admin check (master user has no DB record, so it sees ALL companies)
+const isMasterUser = () => {
+  try {
+    const stored = sessionStorage.getItem('userData');
+    if (!stored) return false;
+    return JSON.parse(stored)?.user?.is_master === true;
+  } catch (e) {
+    return false;
+  }
+};
+
 const UserManagementSystem = ({ embeddedMode = false }) => {
   const [activeTab, setActiveTab] = useState('register');
   const [users, setUsers] = useState([]);
@@ -63,8 +96,16 @@ const UserManagementSystem = ({ embeddedMode = false }) => {
     if (!currentUserId) return;
     
     try {
-      const res = await fetch(`${API_BASE}/users/${currentUserId}/accessible-companies-plants`);
-      const data = await res.json();
+      let data;
+      if (isMasterUser()) {
+        // 👑 Master admin: all companies, no plant restriction
+        const resAll = await fetch(`${API_BASE}/companies`);
+        const allCompanies = await resAll.json();
+        data = { companies: Array.isArray(allCompanies) ? allCompanies : [], plants: [] };
+      } else {
+        const res = await fetch(`${API_BASE}/users/${currentUserId}/accessible-companies-plants`);
+        data = await res.json();
+      }
       console.log('✅ Current User Access:', data);
       setCurrentUserAccess(data);
       
@@ -99,7 +140,11 @@ const UserManagementSystem = ({ embeddedMode = false }) => {
       console.log('🔍 Fetching filtered users for current_user_id:', currentUserId);
       
       // 🔥 FIXED: Pass current_user_id parameter
-      const res = await fetch(`${API_BASE}/users?current_user_id=${currentUserId}`);
+      const res = await fetch(
+        isMasterUser()
+          ? `${API_BASE}/users`
+          : `${API_BASE}/users?current_user_id=${currentUserId}`
+      );
       const filteredUsers = await res.json();
       
       console.log(`✅ Filtered Users (sharing companies/plants): ${filteredUsers.length} users found`);
@@ -172,7 +217,7 @@ const UserManagementSystem = ({ embeddedMode = false }) => {
   };
 
   const fetchRbacDataForCompany = async (companyId, userId = null) => {
-    const uid = userId || currentUserId;
+    const uid = isMasterUser() ? null : (userId || currentUserId);
     try {
       const url = uid
         ? `${API_BASE}/companies/${companyId}/rbac-options?current_user_id=${uid}`
@@ -346,7 +391,7 @@ const UserManagementSystem = ({ embeddedMode = false }) => {
       const data = await res.json();
       
       if (res.ok) {
-        setCredentials(data);
+        setCredentials(normalizeCredentials(data));
         setActiveTab('credentials');
         fetchFilteredUsers(); // ✅ Refresh user list
         resetForm();
@@ -411,7 +456,9 @@ const UserManagementSystem = ({ embeddedMode = false }) => {
       const data = await res.json();
       
       if (res.ok) {
-        setCredentials(data);
+        const fallbackUser = users.find(u => u.id === userId) || null;
+        setCredentials(normalizeCredentials(data, fallbackUser));
+        setShowPassword(true);
         setActiveTab('credentials');
       }
     } catch (err) {
@@ -431,7 +478,31 @@ const UserManagementSystem = ({ embeddedMode = false }) => {
   };
 
   const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
+    const value = String(text ?? '');
+    // navigator.clipboard is undefined on non-secure (http, non-localhost) pages -> use fallback
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value).catch(() => fallbackCopy(value));
+    } else {
+      fallbackCopy(value);
+    }
+  };
+
+  const fallbackCopy = (value) => {
+    try {
+      const textArea = document.createElement('textarea');
+      textArea.value = value;
+      textArea.style.position = 'fixed';
+      textArea.style.top = '0';
+      textArea.style.left = '0';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+    } catch (e) {
+      console.error('Copy failed:', e);
+    }
   };
 
   const filteredUsers = users.filter(user =>
@@ -1054,9 +1125,9 @@ const UserManagementSystem = ({ embeddedMode = false }) => {
                   <div style={{ marginBottom: "8px" }}>
                     <label style={{ display: "block", fontSize: "9px", fontWeight: "500", color: "#666", marginBottom: "4px" }}>User Login ID</label>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#f8f9fa", padding: "6px 8px", borderRadius: "4px" }}>
-                      <span style={{ fontSize: "10px", color: "#000", fontWeight: "500" }}>{credentials.user_login_id}</span>
+                      <span style={{ fontSize: "10px", color: "#000", fontWeight: "500" }}>{credentials.user_login_id || credentials.user_id || credentials.email}</span>
                       <button
-                        onClick={() => copyToClipboard(credentials.user_login_id)}
+                        onClick={() => copyToClipboard(credentials.user_login_id || credentials.user_id || credentials.email)}
                         style={{ padding: "4px", border: "none", background: "transparent", cursor: "pointer", color: "#60a5fa" }}
                         title="Copy User ID"
                       >

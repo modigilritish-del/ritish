@@ -4,6 +4,9 @@ import { Lock, Mail, Eye, EyeOff, Camera, AlertCircle, CheckCircle } from 'lucid
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL + "/api";
 
+// Master admin username (handled by POST /api/master-login)
+const MASTER_USERNAME = 'ritiadmin';
+
 const Login = ({ onLoginSuccess }) => {
   const [step, setStep] = useState('email');
   const [email, setEmail] = useState('');
@@ -150,6 +153,14 @@ const Login = ({ onLoginSuccess }) => {
 
   const handleEmailSubmit = async () => {
     setMessage({ type: '', text: '' });
+
+    // Master admin: skip the lookup and go straight to the password step
+    if (email.trim().toLowerCase() === MASTER_USERNAME) {
+      setLoginOptions({ password: true, fingerprint: false, face: false });
+      setStep('password');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -181,6 +192,25 @@ const Login = ({ onLoginSuccess }) => {
     setLoading(true);
 
     try {
+      // Master admin login (no database user, no extra lookups)
+      if (email.trim().toLowerCase() === MASTER_USERNAME) {
+        const masterRes = await fetch(`${API_BASE}/master-login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: email.trim(), password })
+        });
+
+        if (masterRes.ok) {
+          const masterData = await masterRes.json();
+          setMessage({ type: 'success', text: 'Login successful!' });
+          setTimeout(() => onLoginSuccess(masterData), 500);
+        } else {
+          const error = await masterRes.json();
+          setMessage({ type: 'error', text: error.detail || 'Invalid credentials' });
+        }
+        return;
+      }
+
       console.log('🔐 [LOGIN] Starting password login for:', email);
       
       const formData = new FormData();

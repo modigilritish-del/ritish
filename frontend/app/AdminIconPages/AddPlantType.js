@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { Plus, Edit2, Trash2, X, Save, Factory } from "lucide-react";
 
-export default function AddPlantType({ embeddedMode = false }) {
+export default function AddPlantType({ embeddedMode = false, title = "Plant Types" }) {
   const [plantTypes, setPlantTypes] = useState([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState(null);

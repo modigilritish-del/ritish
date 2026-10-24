@@ -183,6 +183,10 @@ app.include_router(item_master_warehouse_router, prefix="/api", tags=["🏭 Item
 app.include_router(item_master_purchase_router, prefix="/api", tags=["🛒 Item Master – Purchase Fields (6 Tables)"])
 app.include_router(item_master_inv_properties_router, prefix="/api", tags=["📋 Item Master – Inventory Properties Fields (27 Tables)"])
 
+#  MASTER ADMIN (2 lines )
+from master_admin import install_master_admin
+install_master_admin(app)
+
 
 @app.get("/")
 def read_root():

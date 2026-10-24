@@ -340,3 +340,22 @@ class Designation(Base):
     designation_name = Column(String(255), nullable=False, unique=True, index=True)
     designation_code = Column(String(10), nullable=False, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class RoleAccess(Base):
+    __tablename__ = "role_access"
+    __table_args__ = (
+        UniqueConstraint("company_id", "role_id", "department_id", "designation_id", name="unique_company_role_dept_desg"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id", ondelete="CASCADE"), nullable=False, index=True)
+    designation_id = Column(Integer, ForeignKey("designations.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    company = relationship("Company")
+    role = relationship("Role")
+    department = relationship("Department")
+    designation = relationship("Designation")

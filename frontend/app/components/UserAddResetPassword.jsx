@@ -24,6 +24,7 @@ const UserAddResetPassword = () => {
   const [faceStatus, setFaceStatus] = useState({ type: '', text: '' });
   const [enrolledFaces, setEnrolledFaces] = useState([]);
   const [isCameraActive, setIsCameraActive] = useState(false);
+  const [showCameraPrompt, setShowCameraPrompt] = useState(false);
   const [capturedImage, setCapturedImage] = useState(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -278,10 +279,48 @@ const UserAddResetPassword = () => {
     }
   };
 
-  const startCamera = () => {
+  // Real camera start (browser will show its own Allow / Block popup on secure pages)
+  const confirmStartCamera = () => {
+    setShowCameraPrompt(false);
     setFaceStatus({ type: 'info', text: 'Starting camera…' });
     setCapturedImage(null);
     setIsCameraActive(true);
+  };
+
+  // User clicked "Deny" in our popup
+  const denyCamera = () => {
+    setShowCameraPrompt(false);
+    setFaceStatus({ type: 'error', text: 'Camera access denied.' });
+  };
+
+  // Start button: show Allow / Deny popup first (skip it if browser already allowed camera)
+  const startCamera = async () => {
+    setCapturedImage(null);
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        const perm = await navigator.permissions.query({ name: 'camera' });
+        if (perm.state === 'granted') {
+          confirmStartCamera();
+          return;
+        }
+        if (perm.state === 'denied') {
+          setFaceStatus({
+            type: 'error',
+            text: 'Camera is blocked for this site. Click the lock icon in the address bar, set Camera to Allow, then refresh the page.'
+          });
+          return;
+        }
+      }
+    } catch (e) {
+      // Permissions API not supported -> just show our popup
+    }
+    setShowCameraPrompt(true);
+  };
+
+  // Same site, but on localhost (browsers allow camera on localhost)
+  const openOnLocalhost = () => {
+    const { protocol, port, pathname, search } = window.location;
+    window.location.href = `${protocol}//localhost${port ? ':' + port : ''}${pathname}${search}`;
   };
 
   useEffect(() => {
@@ -291,10 +330,35 @@ const UserAddResetPassword = () => {
 
     (async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 1280, height: 720, facingMode: 'user' },
-          audio: false
-        });
+        // Works on every browser: modern API -> legacy API -> clear message
+        const getMedia = (constraints) => {
+          if (typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            return navigator.mediaDevices.getUserMedia(constraints);
+          }
+          const legacy = typeof navigator !== 'undefined' &&
+            (navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia);
+          if (legacy) {
+            return new Promise((resolve, reject) => legacy.call(navigator, constraints, resolve, reject));
+          }
+          const notSupported = new Error('Camera is blocked by the browser on this address. Please open the site using https:// or http://localhost');
+          notSupported.name = 'NotSupportedError';
+          return Promise.reject(notSupported);
+        };
+
+        let stream;
+        try {
+          stream = await getMedia({
+            video: { width: 1280, height: 720, facingMode: 'user' },
+            audio: false
+          });
+        } catch (firstErr) {
+          // Camera doesn't support the requested size/facing -> retry with basic settings
+          if (firstErr && (firstErr.name === 'OverconstrainedError' || firstErr.name === 'ConstraintNotSatisfiedError')) {
+            stream = await getMedia({ video: true, audio: false });
+          } else {
+            throw firstErr;
+          }
+        }
         streamCopy = stream;
 
         const video = videoRef.current;
@@ -674,6 +738,50 @@ const UserAddResetPassword = () => {
           {activeTab === 'face' && (
             <div className="space-y-4">
               <StatusMessage status={faceStatus} />
+              {showCameraPrompt && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+                  <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5 mx-4">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                        <Camera className="w-5 h-5 text-blue-600" />
+                      </div>
+                      <h3 className="text-base font-semibold text-gray-800">Allow camera access?</h3>
+                    </div>
+                    <p className="text-sm text-gray-600 mb-4">
+                      This page wants to use your camera to capture your face for biometric login.
+                    </p>
+                    {typeof window !== 'undefined' && !window.isSecureContext && (
+                      <div className="mb-4 bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-800">
+                        Your browser blocks the camera on this address. Open the site on <b>localhost</b> to use the camera.
+                        (You may need to log in once again.)
+                      </div>
+                    )}
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={denyCamera}
+                        className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100"
+                      >
+                        Deny
+                      </button>
+                      {typeof window !== 'undefined' && !window.isSecureContext ? (
+                        <button
+                          onClick={openOnLocalhost}
+                          className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                        >
+                          Open on localhost
+                        </button>
+                      ) : (
+                        <button
+                          onClick={confirmStartCamera}
+                          className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                        >
+                          Allow
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="space-y-4">
                   <div>

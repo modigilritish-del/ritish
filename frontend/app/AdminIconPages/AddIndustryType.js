@@ -186,7 +186,7 @@ export default function AddIndustryType({ embeddedMode = false }) {
         <div style={{ padding: "0px 12px", height: "32px", borderBottom: "1px solid #e0e0e0", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(to right, #4b5563, #60a5fa)", color: "white", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <Building2 size={14} />
-            <h2 style={{ margin: 0, fontSize: "12px", fontWeight: "600" }}>{title}</h2>
+            <h2 style={{ margin: 0, fontSize: "12px", fontWeight: "600" }}>Industry Types</h2>
           </div>
           <button onClick={() => setShowAddForm(!showAddForm)} style={{ padding: "4px 14px", background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: "4px", fontSize: "10px", fontWeight: "500", cursor: "pointer", color: "white", display: "flex", alignItems: "center", gap: "4px" }}>
             {showAddForm ? <X size={12} /> : <Plus size={12} />}{showAddForm ? "Cancel" : "Add Type"}
